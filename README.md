@@ -177,6 +177,40 @@ ai-monitor-backend/
 
 创建摄像头时，后端自动调用 ZLM `addStreamProxy` 拉取 RTSP 流并对外提供 HTTP-FLV 直播地址，供前端 mpegts.js 播放。
 
+### 直播数据流路径
+
+从摄像头到浏览器画面，数据经过以下四个环节：
+
+```
+IP摄像头 (RTSP)
+    │  rtsp://192.168.x.x/...
+    ▼
+ZLMediaKit (:80)          ← Go 后端通过 addStreamProxy API 注册拉流
+    │  RTSP → 转封装为 FLV（不重新编码，仅换容器格式）
+    │  输出 HTTP-FLV 长连接
+    │  URL: http://工控机IP/live/cam{camera_id}.live.flv
+    ▼
+浏览器 / mpegts.js
+    │  通过 HTTP 长连接持续拉取 FLV 数据
+    │  用 MSE (Media Source Extensions) 喂给 <video> 标签
+    ▼
+页面上的 <video> 元素（用户看到的画面）
+```
+
+**关键细节：**
+
+- ZLM 做的是**转封装**（remux），而非转码，CPU 占用极低
+- 前端直播流 URL 直接指向 ZLM `:80` 端口，**不经过 Go 后端**，避免后端成为视频带宽瓶颈
+- 前端使用 `mpegts.js` 的追帧模式（`liveBufferLatencyChasing`），将端到端延迟控制在 0.5~3 秒
+
+**直播流方案对比：**
+
+| 方案 | 延迟 | 说明 |
+|------|------|------|
+| **HTTP-FLV**（当前） | ~1-3 秒 | 延迟低，兼容性好，ZLM 原生支持 |
+| HLS | ~5-30 秒 | 延迟高，不适合实时监控 |
+| WebRTC | <1 秒 | 延迟最低，但信令复杂 |
+
 > **注意：PCMA 音频兼容性**
 > IP 摄像头通常使用 PCMA（G.711 A-law）音频，ZLM 会将其原样封装进 HTTP-FLV（音频 codec ID = 7）。浏览器 MSE 不支持该音频编码，会导致前端播放失败（`CodecUnsupported`）。前端已通过设置 `hasAudio: false` 绕过此问题（详见前端 README）。若后续需要音频预览，可将 ZLM 的 `[ffmpeg] bin` 配置指向 `/opt/ffmpeg-rk/bin/ffmpeg`（支持 `hevc_rkmpp` 解码 + `h264_rkmpp` 编码），并改用 `addFFmpegSource` API 在推流时将音频转码为 AAC。
 
