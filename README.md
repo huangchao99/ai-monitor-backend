@@ -179,15 +179,27 @@ ai-monitor-backend/
 
 ### 直播数据流路径
 
-从摄像头到浏览器画面，数据经过以下四个环节：
+从摄像头到浏览器画面，数据经过以下四个环节，其中 Go 后端负责在关键操作节点写入数据库：
 
 ```
-IP摄像头 (RTSP)
-    │  rtsp://192.168.x.x/...
+用户操作（前端）
+    │  POST /api/cameras  或  POST /api/cameras/:id/stream/start
     ▼
-ZLMediaKit (:80)          ← Go 后端通过 addStreamProxy API 注册拉流
+Go 后端
+    ├─ [DB写入] INSERT cameras 表（仅创建时）
+    │   记录摄像头名称、RTSP 地址、位置
+    │
+    ├─ 调用 ZLM addStreamProxy API
+    │   告知 ZLM 去拉取 RTSP 流
+    │
+    └─ [DB写入] UPSERT zlm_streams 表
+        记录 stream_key=cam{id}、proxy_key（ZLM返回）
+        status: 1=推流中 / 2=异常
+    ▼
+ZLMediaKit (:80)
+    │  主动拉取 rtsp://摄像头IP/...
     │  RTSP → 转封装为 FLV（不重新编码，仅换容器格式）
-    │  输出 HTTP-FLV 长连接
+    │  对外暴露 HTTP-FLV 长连接
     │  URL: http://工控机IP/live/cam{camera_id}.live.flv
     ▼
 浏览器 / mpegts.js
@@ -197,11 +209,22 @@ ZLMediaKit (:80)          ← Go 后端通过 addStreamProxy API 注册拉流
 页面上的 <video> 元素（用户看到的画面）
 ```
 
+**`zlm_streams` 表写入时机汇总：**
+
+| 触发操作 | 写入行为 |
+|----------|----------|
+| `POST /api/cameras`（创建摄像头） | INSERT `cameras` 表；UPSERT `zlm_streams`（status=1 或 2） |
+| `POST /api/cameras/:id/stream/start`（手动启流） | UPSERT `zlm_streams`（更新 proxy_key、status=1 或 2） |
+| `PUT /api/cameras/:id`（修改 RTSP 地址） | 先停旧流，再 UPSERT `zlm_streams`（新 proxy_key、status=1 或 2） |
+| `POST /api/cameras/:id/stream/stop`（停流） | UPSERT `zlm_streams`（proxy_key 清空、status=0） |
+| `DELETE /api/cameras/:id`（删除摄像头） | 停止 ZLM 流；DELETE `cameras`（`zlm_streams` 因外键 CASCADE 自动删除） |
+
 **关键细节：**
 
 - ZLM 做的是**转封装**（remux），而非转码，CPU 占用极低
 - 前端直播流 URL 直接指向 ZLM `:80` 端口，**不经过 Go 后端**，避免后端成为视频带宽瓶颈
 - 前端使用 `mpegts.js` 的追帧模式（`liveBufferLatencyChasing`），将端到端延迟控制在 0.5~3 秒
+- `zlm_streams` 使用 `ON CONFLICT(camera_id) DO UPDATE`（Upsert），同一摄像头只保留一条流状态记录
 
 **直播流方案对比：**
 
