@@ -23,6 +23,8 @@ func NewAlarmHandler(s *store.Store) *AlarmHandler {
 func (h *AlarmHandler) List(c *gin.Context) {
 	taskID, _ := strconv.ParseInt(c.Query("task_id"), 10, 64)
 	algoName := c.Query("algo_name")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
 	// status=-1 means no filter
 	status := -1
 	if s := c.Query("status"); s != "" {
@@ -33,7 +35,7 @@ func (h *AlarmHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
 
-	alarms, total, err := h.store.ListAlarms(taskID, algoName, status, page, size)
+	alarms, total, err := h.store.ListAlarms(taskID, algoName, startDate, endDate, status, page, size)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "message": err.Error()})
 		return

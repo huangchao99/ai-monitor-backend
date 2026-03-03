@@ -333,7 +333,7 @@ func (s *Store) ListAlgoDetails(taskID int64) ([]model.AlgoDetail, error) {
 
 // ─── Alarms ───────────────────────────────────────────────────
 
-func (s *Store) ListAlarms(taskID int64, algoName string, status int, page, size int) ([]model.Alarm, int, error) {
+func (s *Store) ListAlarms(taskID int64, algoName, startDate, endDate string, status int, page, size int) ([]model.Alarm, int, error) {
 	if size <= 0 {
 		size = 20
 	}
@@ -351,6 +351,14 @@ func (s *Store) ListAlarms(taskID int64, algoName string, status int, page, size
 	if algoName != "" {
 		where += " AND a.algo_name=?"
 		args = append(args, algoName)
+	}
+	if startDate != "" {
+		where += " AND date(a.alarm_time) >= ?"
+		args = append(args, startDate)
+	}
+	if endDate != "" {
+		where += " AND date(a.alarm_time) <= ?"
+		args = append(args, endDate)
 	}
 	if status >= 0 {
 		where += " AND a.status=?"
