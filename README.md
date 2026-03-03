@@ -177,6 +177,9 @@ ai-monitor-backend/
 
 创建摄像头时，后端自动调用 ZLM `addStreamProxy` 拉取 RTSP 流并对外提供 HTTP-FLV 直播地址，供前端 mpegts.js 播放。
 
+> **注意：PCMA 音频兼容性**
+> IP 摄像头通常使用 PCMA（G.711 A-law）音频，ZLM 会将其原样封装进 HTTP-FLV（音频 codec ID = 7）。浏览器 MSE 不支持该音频编码，会导致前端播放失败（`CodecUnsupported`）。前端已通过设置 `hasAudio: false` 绕过此问题（详见前端 README）。若后续需要音频预览，可将 ZLM 的 `[ffmpeg] bin` 配置指向 `/opt/ffmpeg-rk/bin/ffmpeg`（支持 `hevc_rkmpp` 解码 + `h264_rkmpp` 编码），并改用 `addFFmpegSource` API 在推流时将音频转码为 AAC。
+
 ---
 
 ## Python 服务集成
