@@ -60,6 +60,7 @@ func main() {
 		cams.DELETE("/:id", cameraH.Delete)
 		cams.POST("/:id/stream/start", cameraH.StreamStart)
 		cams.POST("/:id/stream/stop", cameraH.StreamStop)
+		cams.GET("/:id/snapshot", cameraH.Snapshot)
 	}
 
 	// Algorithms
