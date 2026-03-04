@@ -179,7 +179,7 @@ func (s *Store) DeleteZlmStream(cameraID int64) error {
 // ─── Algorithms ───────────────────────────────────────────────
 
 func (s *Store) ListAlgorithms() ([]model.Algorithm, error) {
-	rows, err := s.db.Query("SELECT id, algo_key, algo_name, category FROM algorithms ORDER BY id")
+	rows, err := s.db.Query("SELECT id, algo_key, algo_name, COALESCE(category,''), COALESCE(param_definition,'') FROM algorithms ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (s *Store) ListAlgorithms() ([]model.Algorithm, error) {
 	var algos []model.Algorithm
 	for rows.Next() {
 		var a model.Algorithm
-		if err := rows.Scan(&a.ID, &a.AlgoKey, &a.AlgoName, &a.Category); err != nil {
+		if err := rows.Scan(&a.ID, &a.AlgoKey, &a.AlgoName, &a.Category, &a.ParamDefinition); err != nil {
 			return nil, err
 		}
 		algos = append(algos, a)

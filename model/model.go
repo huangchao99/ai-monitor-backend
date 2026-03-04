@@ -29,10 +29,11 @@ type ZlmStream struct {
 
 // Algorithm maps to the algorithms table.
 type Algorithm struct {
-	ID       int64  `json:"id" db:"id"`
-	AlgoKey  string `json:"algo_key" db:"algo_key"`
-	AlgoName string `json:"algo_name" db:"algo_name"`
-	Category string `json:"category" db:"category"`
+	ID              int64  `json:"id" db:"id"`
+	AlgoKey         string `json:"algo_key" db:"algo_key"`
+	AlgoName        string `json:"algo_name" db:"algo_name"`
+	Category        string `json:"category" db:"category"`
+	ParamDefinition string `json:"param_definition" db:"param_definition"`
 }
 
 // Task maps to the tasks table.
