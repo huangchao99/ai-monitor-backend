@@ -26,6 +26,7 @@ func main() {
 	cameraH := api.NewCameraHandler(s)
 	taskH := api.NewTaskHandler(s)
 	alarmH := api.NewAlarmHandler(s)
+	algoMgmtH := api.NewAlgoManageHandler(s)
 
 	// Gin router
 	r := gin.Default()
@@ -63,8 +64,26 @@ func main() {
 		cams.GET("/:id/snapshot", cameraH.Snapshot)
 	}
 
-	// Algorithms
+	// Algorithms (read-only for task page, uses existing handler)
 	r.GET("/api/algorithms", taskH.ListAlgorithms)
+
+	// Algorithm management (CRUD + model association)
+	algoMgmt := r.Group("/api/algo-manage")
+	{
+		algoMgmt.GET("/algorithms", algoMgmtH.ListAlgorithms)
+		algoMgmt.POST("/algorithms", algoMgmtH.CreateAlgorithm)
+		algoMgmt.PUT("/algorithms/:id", algoMgmtH.UpdateAlgorithm)
+		algoMgmt.DELETE("/algorithms/:id", algoMgmtH.DeleteAlgorithm)
+
+		algoMgmt.GET("/models", algoMgmtH.ListModels)
+		algoMgmt.POST("/models", algoMgmtH.CreateModel)
+		algoMgmt.PUT("/models/:id", algoMgmtH.UpdateModel)
+		algoMgmt.DELETE("/models/:id", algoMgmtH.DeleteModel)
+
+		algoMgmt.GET("/plugins", algoMgmtH.ListPlugins)
+		algoMgmt.POST("/plugins", algoMgmtH.UploadPlugin)
+		algoMgmt.DELETE("/plugins/:filename", algoMgmtH.DeletePlugin)
+	}
 
 	// Tasks
 	tasks := r.Group("/api/tasks")

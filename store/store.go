@@ -30,11 +30,10 @@ func New(dsn string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-		PRAGMA foreign_keys = ON;
-		PRAGMA journal_mode = WAL;
-
-		CREATE TABLE IF NOT EXISTS zlm_streams (
+	stmts := []string{
+		`PRAGMA foreign_keys = ON`,
+		`PRAGMA journal_mode = WAL`,
+		`CREATE TABLE IF NOT EXISTS zlm_streams (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			camera_id  INTEGER NOT NULL UNIQUE,
 			app        TEXT    NOT NULL DEFAULT 'live',
@@ -43,9 +42,40 @@ func (s *Store) migrate() error {
 			status     INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
-		);
-	`)
-	return err
+		)`,
+		`CREATE TABLE IF NOT EXISTS models (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			model_name      TEXT NOT NULL,
+			model_path      TEXT NOT NULL,
+			labels_path     TEXT DEFAULT '',
+			model_type      TEXT DEFAULT 'yolov11',
+			input_width     INTEGER DEFAULT 640,
+			input_height    INTEGER DEFAULT 640,
+			conf_threshold  REAL DEFAULT 0.35,
+			nms_threshold   REAL DEFAULT 0.45
+		)`,
+		`CREATE TABLE IF NOT EXISTS algo_model_map (
+			id       INTEGER PRIMARY KEY AUTOINCREMENT,
+			algo_id  INTEGER NOT NULL,
+			model_id INTEGER NOT NULL,
+			UNIQUE(algo_id, model_id),
+			FOREIGN KEY (algo_id)  REFERENCES algorithms(id) ON DELETE CASCADE,
+			FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate: %w (stmt: %s)", err, stmt[:min(40, len(stmt))])
+		}
+	}
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // ─── Cameras ──────────────────────────────────────────────────
@@ -410,4 +440,200 @@ func (s *Store) ListAlarms(taskID int64, algoName, startDate, endDate string, st
 func (s *Store) UpdateAlarmStatus(id int64, status int) error {
 	_, err := s.db.Exec("UPDATE alarms SET status=? WHERE id=?", status, id)
 	return err
+}
+
+// ─── Models ───────────────────────────────────────────────────
+
+func (s *Store) ListModels() ([]model.Model, error) {
+	rows, err := s.db.Query(`
+		SELECT id, model_name, model_path, COALESCE(labels_path,''),
+		       COALESCE(model_type,'yolov11'), COALESCE(input_width,640),
+		       COALESCE(input_height,640), COALESCE(conf_threshold,0.35),
+		       COALESCE(nms_threshold,0.45)
+		FROM models ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var models []model.Model
+	for rows.Next() {
+		var m model.Model
+		if err := rows.Scan(&m.ID, &m.ModelName, &m.ModelPath, &m.LabelsPath,
+			&m.ModelType, &m.InputWidth, &m.InputHeight,
+			&m.ConfThreshold, &m.NmsThreshold); err != nil {
+			return nil, err
+		}
+		models = append(models, m)
+	}
+	return models, nil
+}
+
+func (s *Store) GetModel(id int64) (*model.Model, error) {
+	row := s.db.QueryRow(`
+		SELECT id, model_name, model_path, COALESCE(labels_path,''),
+		       COALESCE(model_type,'yolov11'), COALESCE(input_width,640),
+		       COALESCE(input_height,640), COALESCE(conf_threshold,0.35),
+		       COALESCE(nms_threshold,0.45)
+		FROM models WHERE id=?`, id)
+	var m model.Model
+	if err := row.Scan(&m.ID, &m.ModelName, &m.ModelPath, &m.LabelsPath,
+		&m.ModelType, &m.InputWidth, &m.InputHeight,
+		&m.ConfThreshold, &m.NmsThreshold); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("model %d not found", id)
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (s *Store) CreateModel(req model.CreateModelReq) (int64, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO models (model_name, model_path, labels_path, model_type,
+		                    input_width, input_height, conf_threshold, nms_threshold)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		req.ModelName, req.ModelPath, req.LabelsPath, req.ModelType,
+		req.InputWidth, req.InputHeight, req.ConfThreshold, req.NmsThreshold,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) UpdateModel(id int64, req model.UpdateModelReq) error {
+	_, err := s.db.Exec(`
+		UPDATE models SET model_name=?, model_path=?, labels_path=?, model_type=?,
+		                  input_width=?, input_height=?, conf_threshold=?, nms_threshold=?
+		WHERE id=?`,
+		req.ModelName, req.ModelPath, req.LabelsPath, req.ModelType,
+		req.InputWidth, req.InputHeight, req.ConfThreshold, req.NmsThreshold, id,
+	)
+	return err
+}
+
+func (s *Store) DeleteModel(id int64) error {
+	// 检查是否被算法引用
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM algo_model_map WHERE model_id=?", id).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("该模型已被 %d 个算法引用，无法删除", count)
+	}
+	_, err := s.db.Exec("DELETE FROM models WHERE id=?", id)
+	return err
+}
+
+// ─── Algorithms CRUD ──────────────────────────────────────────
+
+func (s *Store) CreateAlgorithm(req model.CreateAlgorithmReq) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(
+		"INSERT INTO algorithms (algo_key, algo_name, category, param_definition) VALUES (?,?,?,?)",
+		req.AlgoKey, req.AlgoName, req.Category, req.ParamDefinition,
+	)
+	if err != nil {
+		return 0, err
+	}
+	algoID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	for _, mid := range req.ModelIDs {
+		if _, err := tx.Exec("INSERT OR IGNORE INTO algo_model_map (algo_id, model_id) VALUES (?,?)", algoID, mid); err != nil {
+			return 0, err
+		}
+	}
+	return algoID, tx.Commit()
+}
+
+func (s *Store) UpdateAlgorithm(id int64, req model.UpdateAlgorithmReq) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		"UPDATE algorithms SET algo_key=?, algo_name=?, category=?, param_definition=? WHERE id=?",
+		req.AlgoKey, req.AlgoName, req.Category, req.ParamDefinition, id,
+	); err != nil {
+		return err
+	}
+	// 替换关联模型
+	if req.ModelIDs != nil {
+		if _, err := tx.Exec("DELETE FROM algo_model_map WHERE algo_id=?", id); err != nil {
+			return err
+		}
+		for _, mid := range req.ModelIDs {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO algo_model_map (algo_id, model_id) VALUES (?,?)", id, mid); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteAlgorithm(id int64) error {
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM task_algo_details WHERE algo_id=?", id).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("该算法已被 %d 个任务使用，无法删除", count)
+	}
+	_, err := s.db.Exec("DELETE FROM algorithms WHERE id=?", id)
+	return err
+}
+
+// ─── AlgoModelMap ─────────────────────────────────────────────
+
+func (s *Store) ListAlgoModels(algoID int64) ([]model.Model, error) {
+	rows, err := s.db.Query(`
+		SELECT m.id, m.model_name, m.model_path, COALESCE(m.labels_path,''),
+		       COALESCE(m.model_type,'yolov11'), COALESCE(m.input_width,640),
+		       COALESCE(m.input_height,640), COALESCE(m.conf_threshold,0.35),
+		       COALESCE(m.nms_threshold,0.45)
+		FROM models m
+		JOIN algo_model_map amm ON amm.model_id = m.id
+		WHERE amm.algo_id=?`, algoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var models []model.Model
+	for rows.Next() {
+		var m model.Model
+		if err := rows.Scan(&m.ID, &m.ModelName, &m.ModelPath, &m.LabelsPath,
+			&m.ModelType, &m.InputWidth, &m.InputHeight,
+			&m.ConfThreshold, &m.NmsThreshold); err != nil {
+			return nil, err
+		}
+		models = append(models, m)
+	}
+	return models, nil
+}
+
+func (s *Store) ListAlgorithmsWithModels() ([]model.Algorithm, error) {
+	algos, err := s.ListAlgorithms()
+	if err != nil {
+		return nil, err
+	}
+	for i := range algos {
+		models, err := s.ListAlgoModels(algos[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		if models == nil {
+			models = []model.Model{}
+		}
+		algos[i].Models = models
+	}
+	return algos, nil
 }

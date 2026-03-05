@@ -34,6 +34,28 @@ type Algorithm struct {
 	AlgoName        string `json:"algo_name" db:"algo_name"`
 	Category        string `json:"category" db:"category"`
 	ParamDefinition string `json:"param_definition" db:"param_definition"`
+	// Joined
+	Models []Model `json:"models,omitempty"`
+}
+
+// Model maps to the models table.
+type Model struct {
+	ID             int64   `json:"id" db:"id"`
+	ModelName      string  `json:"model_name" db:"model_name"`
+	ModelPath      string  `json:"model_path" db:"model_path"`
+	LabelsPath     string  `json:"labels_path" db:"labels_path"`
+	ModelType      string  `json:"model_type" db:"model_type"`
+	InputWidth     int     `json:"input_width" db:"input_width"`
+	InputHeight    int     `json:"input_height" db:"input_height"`
+	ConfThreshold  float64 `json:"conf_threshold" db:"conf_threshold"`
+	NmsThreshold   float64 `json:"nms_threshold" db:"nms_threshold"`
+}
+
+// AlgoModelMap maps to the algo_model_map table.
+type AlgoModelMap struct {
+	ID      int64 `json:"id" db:"id"`
+	AlgoID  int64 `json:"algo_id" db:"algo_id"`
+	ModelID int64 `json:"model_id" db:"model_id"`
 }
 
 // Task maps to the tasks table.
@@ -111,4 +133,46 @@ type AlgoDetailReq struct {
 
 type UpdateAlarmReq struct {
 	Status int `json:"status"`
+}
+
+// ---- Model request structs ----
+
+type CreateModelReq struct {
+	ModelName     string  `json:"model_name" binding:"required"`
+	ModelPath     string  `json:"model_path" binding:"required"`
+	LabelsPath    string  `json:"labels_path"`
+	ModelType     string  `json:"model_type"`
+	InputWidth    int     `json:"input_width"`
+	InputHeight   int     `json:"input_height"`
+	ConfThreshold float64 `json:"conf_threshold"`
+	NmsThreshold  float64 `json:"nms_threshold"`
+}
+
+type UpdateModelReq struct {
+	ModelName     string  `json:"model_name"`
+	ModelPath     string  `json:"model_path"`
+	LabelsPath    string  `json:"labels_path"`
+	ModelType     string  `json:"model_type"`
+	InputWidth    int     `json:"input_width"`
+	InputHeight   int     `json:"input_height"`
+	ConfThreshold float64 `json:"conf_threshold"`
+	NmsThreshold  float64 `json:"nms_threshold"`
+}
+
+// ---- Algorithm request structs ----
+
+type CreateAlgorithmReq struct {
+	AlgoKey         string  `json:"algo_key" binding:"required"`
+	AlgoName        string  `json:"algo_name" binding:"required"`
+	Category        string  `json:"category"`
+	ParamDefinition string  `json:"param_definition"`
+	ModelIDs        []int64 `json:"model_ids"`
+}
+
+type UpdateAlgorithmReq struct {
+	AlgoKey         string  `json:"algo_key"`
+	AlgoName        string  `json:"algo_name"`
+	Category        string  `json:"category"`
+	ParamDefinition string  `json:"param_definition"`
+	ModelIDs        []int64 `json:"model_ids"`
 }
