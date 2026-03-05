@@ -1,7 +1,9 @@
 package api
 
 import (
+	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -76,4 +78,30 @@ func (h *AlarmHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "updated"})
+}
+
+func (h *AlarmHandler) Delete(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "message": "invalid id"})
+		return
+	}
+	imageURL, err := h.store.DeleteAlarm(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "message": err.Error()})
+		return
+	}
+	// Delete snapshot file if it exists (imageURL is the raw file path stored in DB)
+	if imageURL != "" && strings.HasPrefix(imageURL, "/") {
+		if removeErr := os.Remove(imageURL); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("warn: failed to delete snapshot file %s: %v", imageURL, removeErr)
+		}
+	} else if imageURL != "" {
+		// Relative path fallback
+		absPath := filepath.Join("/home/hzhy/ai-monitor-service/snapshots", filepath.Base(imageURL))
+		if removeErr := os.Remove(absPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("warn: failed to delete snapshot file %s: %v", absPath, removeErr)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "deleted"})
 }

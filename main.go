@@ -102,6 +102,7 @@ func main() {
 	{
 		alarms.GET("", alarmH.List)
 		alarms.PUT("/:id", alarmH.UpdateStatus)
+		alarms.DELETE("/:id", alarmH.Delete)
 	}
 
 	// Serve snapshot images

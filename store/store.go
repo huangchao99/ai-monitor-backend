@@ -442,6 +442,19 @@ func (s *Store) UpdateAlarmStatus(id int64, status int) error {
 	return err
 }
 
+// DeleteAlarm removes an alarm record and returns its image_url (raw path) so the caller can delete the file.
+func (s *Store) DeleteAlarm(id int64) (imageURL string, err error) {
+	row := s.db.QueryRow("SELECT COALESCE(image_url,'') FROM alarms WHERE id=?", id)
+	if err = row.Scan(&imageURL); err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("alarm %d not found", id)
+		}
+		return "", err
+	}
+	_, err = s.db.Exec("DELETE FROM alarms WHERE id=?", id)
+	return imageURL, err
+}
+
 // ─── Models ───────────────────────────────────────────────────
 
 func (s *Store) ListModels() ([]model.Model, error) {
