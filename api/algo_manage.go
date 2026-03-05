@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -193,4 +196,49 @@ func (h *AlgoManageHandler) UploadPlugin(c *gin.Context) {
 func (h *AlgoManageHandler) DeletePlugin(c *gin.Context) {
 	filename := c.Param("filename")
 	proxyToPython(c, http.MethodDelete, "/api/plugins/"+filename, nil, "")
+}
+
+// ─── Model File Upload ────────────────────────────────────────
+
+// allowedModelExts lists permitted extensions for model/label file upload.
+var allowedModelExts = map[string]bool{
+	".rknn":    true,
+	".onnx":    true,
+	".pt":      true,
+	".bin":     true,
+	".tflite":  true,
+	".weights": true,
+	".txt":     true,
+	".names":   true,
+}
+
+// UploadModelFile saves an uploaded model or label file to ModelsUploadDir
+// and returns its absolute path on the server.
+func (h *AlgoManageHandler) UploadModelFile(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		fail(c, http.StatusBadRequest, "缺少上传文件: "+err.Error())
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if !allowedModelExts[ext] {
+		fail(c, http.StatusBadRequest, "不支持的文件类型: "+ext+
+			"，允许的类型: .rknn .onnx .pt .bin .tflite .weights .txt .names")
+		return
+	}
+
+	// Ensure upload directory exists
+	if err := os.MkdirAll(config.ModelsUploadDir, 0o755); err != nil {
+		fail(c, http.StatusInternalServerError, "创建目录失败: "+err.Error())
+		return
+	}
+
+	destPath := filepath.Join(config.ModelsUploadDir, filepath.Base(file.Filename))
+	if err := c.SaveUploadedFile(file, destPath); err != nil {
+		fail(c, http.StatusInternalServerError, "保存文件失败: "+err.Error())
+		return
+	}
+
+	ok(c, gin.H{"path": destPath, "filename": file.Filename, "size": file.Size})
 }

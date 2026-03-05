@@ -83,6 +83,8 @@ func main() {
 		algoMgmt.GET("/plugins", algoMgmtH.ListPlugins)
 		algoMgmt.POST("/plugins", algoMgmtH.UploadPlugin)
 		algoMgmt.DELETE("/plugins/:filename", algoMgmtH.DeletePlugin)
+
+		algoMgmt.POST("/upload-file", algoMgmtH.UploadModelFile)
 	}
 
 	// Tasks
