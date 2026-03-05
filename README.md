@@ -85,7 +85,7 @@ ai-monitor-backend/
 ├── config/
 │   └── config.go         # 配置项（支持环境变量覆盖）
 ├── model/
-│   └── model.go          # 所有数据结构定义（Camera, Task, Alarm, ZlmStream 等）
+│   └── model.go          # 所有数据结构定义（Camera, Task, Alarm, ZlmStream, Algorithm 等）
 ├── store/
 │   └── store.go          # SQLite 全量 CRUD（含 zlm_streams 表自动建表）
 ├── db/
@@ -96,7 +96,7 @@ ai-monitor-backend/
 ├── pyservice/
 │   └── client.go         # Python 算法服务 HTTP 客户端
 └── api/
-    ├── camera.go         # 摄像头 CRUD + ZLM 流控制接口
+    ├── camera.go         # 摄像头 CRUD + ZLM 流控制 + 摄像头截图代理（/snapshot）
     ├── task.go           # 任务 CRUD + 启停（转发至 Python）+ 算法列表
     └── alarm.go          # 告警分页查询 + 状态更新
 ```
@@ -121,12 +121,19 @@ ai-monitor-backend/
 | DELETE | `/api/cameras/:id` | 删除摄像头 |
 | POST | `/api/cameras/:id/stream/start` | 手动启动 ZLM 代理流 |
 | POST | `/api/cameras/:id/stream/stop` | 停止 ZLM 代理流 |
+| GET | `/api/cameras/:id/snapshot` | 获取摄像头当前帧截图（JPEG），代理 ZLM getSnap |
+
+**`/snapshot` 接口说明：**
+- 从数据库读取摄像头的 `rtsp_url`，调用 ZLM `getSnap?url=<rtsp_url>&timeout_sec=10&expire_sec=5`
+- ZLM 使用 `/opt/ffmpeg-rk/bin/ffmpeg` 截帧，返回 JPEG 图像
+- 若 ZLM 返回非 `image/jpeg`（如返回 logo.png 占位图），则响应 503，前端应显示"画面不可用"提示
+- **注意：** ZLM 重启后已注册的代理流会丢失，但 `snapshot` 接口直接传 RTSP URL 给 ffmpeg，无需流处于推送状态
 
 ### 算法字典
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/algorithms` | 获取算法字典（只读，数据来自 DB） |
+| GET | `/api/algorithms` | 获取算法字典（含 `param_definition` 字段，只读） |
 
 ### 任务管理
 
@@ -159,10 +166,22 @@ ai-monitor-backend/
 |------|------|
 | `cameras` | 摄像头信息（名称、RTSP 地址、位置） |
 | `zlm_streams` | ZLM 代理流状态（stream_key、proxy_key） |
-| `algorithms` | 算法字典（algo_key 对应 Python 插件文件名） |
+| `algorithms` | 算法字典（algo_key 对应 Python 插件文件名；`param_definition` JSON 定义前端渲染参数） |
+| `models` | RKNN 模型注册表（路径、标签文件、架构类型、输入尺寸、阈值） |
+| `algo_model_map` | 算法与模型的多对多关联 |
 | `tasks` | 监控任务（status: 0=停止, 1=运行, 2=异常） |
 | `task_algo_details` | 任务-算法配置（algo_params / alarm_config / roi_config JSON） |
 | `alarms` | 报警记录（抓图路径、处理状态） |
+
+**`algorithms.param_definition` 字段说明（Go 中作为 `string` 传给前端，前端自行解析）：**
+```json
+[
+  { "key": "confidence", "label": "置信度阈值", "type": "number", "default": 0.35, "min": 0.1, "max": 1.0, "step": 0.05 },
+  { "key": "duration",   "label": "持续时间(秒)", "type": "number", "default": 30,   "min": 1,   "max": 300,  "step": 1 },
+  { "key": "skip_frame", "label": "跳帧数",    "type": "number", "default": 10,   "min": 1,   "max": 30,   "step": 1 }
+]
+```
+字段留空时前端仅显示通用的"冷却时间"输入项。`model/model.go` 中 `Algorithm.ParamDefinition` 字段以原始 JSON 字符串透传，不做服务端解析。
 
 ---
 
@@ -235,7 +254,18 @@ ZLMediaKit (:80)
 | WebRTC | <1 秒 | 延迟最低，但信令复杂 |
 
 > **注意：PCMA 音频兼容性**
-> IP 摄像头通常使用 PCMA（G.711 A-law）音频，ZLM 会将其原样封装进 HTTP-FLV（音频 codec ID = 7）。浏览器 MSE 不支持该音频编码，会导致前端播放失败（`CodecUnsupported`）。前端已通过设置 `hasAudio: false` 绕过此问题（详见前端 README）。若后续需要音频预览，可将 ZLM 的 `[ffmpeg] bin` 配置指向 `/opt/ffmpeg-rk/bin/ffmpeg`（支持 `hevc_rkmpp` 解码 + `h264_rkmpp` 编码），并改用 `addFFmpegSource` API 在推流时将音频转码为 AAC。
+> IP 摄像头通常使用 PCMA（G.711 A-law）音频，ZLM 会将其原样封装进 HTTP-FLV（音频 codec ID = 7）。浏览器 MSE 不支持该音频编码，会导致前端播放失败（`CodecUnsupported`）。前端已通过设置 `hasAudio: false` 绕过此问题（详见前端 README）。若后续需要音频预览，可改用 `addFFmpegSource` API 并指定 ffmpeg 转码为 AAC。
+
+> **注意：ZLM 重启后流丢失**
+> ZLM 的 `addStreamProxy` 代理流保存在内存中，**重启 ZLM 后全部丢失**，而数据库中 `zlm_streams` 仍记录为推流中，导致前端播放 404。解决方式：进入摄像头管理页面，对每个摄像头先点"停流"再点"开流"，重新向 ZLM 注册代理流即可恢复。
+
+> **ZLM getSnap 配置要求**
+> `getSnap` 功能依赖 ffmpeg 可执行文件。确保 ZLM 配置文件（`config.ini`）中 `[ffmpeg]` 段的 `bin` 指向可用的 ffmpeg：
+> ```ini
+> [ffmpeg]
+> bin=/opt/ffmpeg-rk/bin/ffmpeg
+> ```
+> 若路径不存在或 ffmpeg 无法运行，ZLM 会返回 logo.png 占位图，后端 `/snapshot` 接口会拦截并返回 503。
 
 ---
 

@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"ai-monitor-backend/config"
 	"ai-monitor-backend/model"
 	"ai-monitor-backend/store"
 	"ai-monitor-backend/zlm"
@@ -212,14 +214,9 @@ func (h *CameraHandler) StreamStop(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "stream stopped"})
 }
 
-const inferServerURL = "http://127.0.0.1:8080"
-
-// Snapshot returns a JPEG frame for the camera.
-//
-// Strategy:
-//  1. If the camera has a running task, use its cached frame immediately.
-//  2. Otherwise, register a temporary decode-only stream (no models) in the
-//     infer server, poll until a frame is cached, then clean up.
+// Snapshot proxies a JPEG snapshot from ZLM's getSnap API.
+// ZLM uses ffmpeg (/opt/ffmpeg-rk/bin/ffmpeg) to capture a frame from the
+// camera's RTSP stream.
 func (h *CameraHandler) Snapshot(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -227,79 +224,32 @@ func (h *CameraHandler) Snapshot(c *gin.Context) {
 		return
 	}
 
-	// ── 1. Try running tasks first (fast path) ──────────────────────────────
-	taskIDs, _ := h.store.GetRunningTaskIDsByCamera(id)
-	for _, tid := range taskIDs {
-		if jpegBytes := fetchInferFrame(fmt.Sprintf("task_%d", tid)); jpegBytes != nil {
-			c.Header("Content-Type", "image/jpeg")
-			c.Header("Cache-Control", "no-cache, no-store")
-			c.Writer.Write(jpegBytes)
-			return
-		}
-	}
-
-	// ── 2. No running task: register a temporary decode-only stream ─────────
 	camera, err := h.store.GetCamera(id)
 	if err != nil {
 		c.Status(http.StatusNotFound)
 		return
 	}
 
-	tempID := fmt.Sprintf("snap_cam%d", id)
-
-	// Register stream (models omitted → decode only, no inference)
-	regBody := fmt.Sprintf(`{"cam_id":%q,"rtsp_url":%q,"frame_skip":1}`, tempID, camera.RtspURL)
-	regResp, err := snapClient.Post(
-		inferServerURL+"/api/streams",
-		"application/json",
-		strings.NewReader(regBody),
+	snapURL := fmt.Sprintf(
+		"%s/index/api/getSnap?secret=%s&url=%s&timeout_sec=10&expire_sec=5",
+		config.ZLMBaseURL, config.ZLMSecret,
+		url.QueryEscape(camera.RtspURL),
 	)
+
+	resp, err := snapClient.Get(snapURL)
 	if err != nil {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
-	regResp.Body.Close()
-
-	// Ensure cleanup regardless of outcome
-	defer func() {
-		req, _ := http.NewRequest(http.MethodDelete, inferServerURL+"/api/streams/"+tempID, nil)
-		if req != nil {
-			resp, _ := snapClient.Do(req)
-			if resp != nil {
-				resp.Body.Close()
-			}
-		}
-	}()
-
-	// Poll for the first cached frame (up to 6 s)
-	for i := 0; i < 12; i++ {
-		time.Sleep(500 * time.Millisecond)
-		if jpegBytes := fetchInferFrame(tempID); jpegBytes != nil {
-			c.Header("Content-Type", "image/jpeg")
-			c.Header("Cache-Control", "no-cache, no-store")
-			c.Writer.Write(jpegBytes)
-			return
-		}
-	}
-
-	c.Status(http.StatusServiceUnavailable)
-}
-
-// fetchInferFrame fetches a cached JPEG frame from the infer server for the
-// given stream ID. Returns nil when no frame is available yet.
-func fetchInferFrame(streamID string) []byte {
-	url := inferServerURL + "/api/cache/image?stream_id=" + streamID + "&latest=true"
-	resp, err := snapClient.Get(url)
-	if err != nil {
-		return nil
-	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/") {
-		return nil
+
+	ct := resp.Header.Get("Content-Type")
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(ct, "image/jpeg") {
+		c.Status(http.StatusServiceUnavailable)
+		return
 	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil || len(data) == 0 {
-		return nil
-	}
-	return data
+
+	c.Header("Content-Type", ct)
+	c.Header("Cache-Control", "no-cache, no-store")
+	io.Copy(c.Writer, resp.Body)
 }

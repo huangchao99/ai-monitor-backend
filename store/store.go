@@ -303,24 +303,6 @@ func (s *Store) UpdateTaskStatus(id int64, status int, errMsg string) error {
 	return err
 }
 
-// GetRunningTaskIDsByCamera returns IDs of running tasks for the given camera.
-func (s *Store) GetRunningTaskIDsByCamera(cameraID int64) ([]int64, error) {
-	rows, err := s.db.Query("SELECT id FROM tasks WHERE camera_id=? AND status=1", cameraID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
-}
-
 // ─── AlgoDetails ──────────────────────────────────────────────
 
 func (s *Store) ListAlgoDetails(taskID int64) ([]model.AlgoDetail, error) {
