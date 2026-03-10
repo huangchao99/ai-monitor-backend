@@ -98,8 +98,8 @@ type Alarm struct {
 	Status       int       `json:"status" db:"status"` // 0:unhandled 1:handled
 	AlarmDetails string    `json:"alarm_details" db:"alarm_details"`
 	// Joined
-	TaskName   string `json:"task_name,omitempty"`
-	CameraName string `json:"camera_name,omitempty"`
+	TaskName   string `json:"task_name"`
+	CameraName string `json:"camera_name"`
 }
 
 // ---- Request structs ----
