@@ -124,6 +124,13 @@ type CreateTaskReq struct {
 	AlgoDetails []AlgoDetailReq `json:"algo_details" binding:"required,min=1"`
 }
 
+type UpdateTaskReq struct {
+	TaskName    string          `json:"task_name" binding:"required"`
+	CameraID    int64           `json:"camera_id" binding:"required"`
+	Remark      string          `json:"remark"`
+	AlgoDetails []AlgoDetailReq `json:"algo_details" binding:"required,min=1"`
+}
+
 type AlgoDetailReq struct {
 	AlgoID      int64  `json:"algo_id" binding:"required"`
 	RoiConfig   string `json:"roi_config"`

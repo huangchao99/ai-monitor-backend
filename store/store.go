@@ -320,6 +320,47 @@ func (s *Store) CreateTask(req model.CreateTaskReq) (int64, error) {
 	return taskID, tx.Commit()
 }
 
+func (s *Store) UpdateTask(id int64, req model.UpdateTaskReq) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		"UPDATE tasks SET task_name=?, camera_id=?, remark=? WHERE id=?",
+		req.TaskName, req.CameraID, req.Remark, id,
+	); err != nil {
+		return err
+	}
+
+	// 替换算法配置：先删旧的，再插新的
+	if _, err := tx.Exec("DELETE FROM task_algo_details WHERE task_id=?", id); err != nil {
+		return err
+	}
+	for _, d := range req.AlgoDetails {
+		roiConfig := d.RoiConfig
+		if roiConfig == "" {
+			roiConfig = "[]"
+		}
+		algoParams := d.AlgoParams
+		if algoParams == "" {
+			algoParams = "{}"
+		}
+		alarmConfig := d.AlarmConfig
+		if alarmConfig == "" {
+			alarmConfig = "{}"
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO task_algo_details (task_id, algo_id, roi_config, algo_params, alarm_config) VALUES (?, ?, ?, ?, ?)",
+			id, d.AlgoID, roiConfig, algoParams, alarmConfig,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) DeleteTask(id int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {

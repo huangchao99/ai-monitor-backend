@@ -57,6 +57,38 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": task})
 }
 
+func (h *TaskHandler) Update(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "message": "invalid id"})
+		return
+	}
+
+	task, err := h.store.GetTask(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 1, "message": "task not found"})
+		return
+	}
+	if task.Status == 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "message": "请先停止任务再编辑"})
+		return
+	}
+
+	var req model.UpdateTaskReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "message": err.Error()})
+		return
+	}
+
+	if err := h.store.UpdateTask(id, req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "message": err.Error()})
+		return
+	}
+
+	task, _ = h.store.GetTask(id)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "updated", "data": task})
+}
+
 func (h *TaskHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {

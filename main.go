@@ -92,6 +92,7 @@ func main() {
 	{
 		tasks.GET("", taskH.List)
 		tasks.POST("", taskH.Create)
+		tasks.PUT("/:id", taskH.Update)
 		tasks.DELETE("/:id", taskH.Delete)
 		tasks.POST("/:id/start", taskH.Start)
 		tasks.POST("/:id/stop", taskH.Stop)
