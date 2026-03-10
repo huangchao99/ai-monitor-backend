@@ -321,8 +321,20 @@ func (s *Store) CreateTask(req model.CreateTaskReq) (int64, error) {
 }
 
 func (s *Store) DeleteTask(id int64) error {
-	_, err := s.db.Exec("DELETE FROM tasks WHERE id=?", id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 解除报警与任务的关联，保留历史报警记录（task_name/camera_name 已快照在报警行里）
+	if _, err := tx.Exec("UPDATE alarms SET task_id=NULL WHERE task_id=?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM tasks WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateTaskStatus(id int64, status int, errMsg string) error {
@@ -409,10 +421,8 @@ func (s *Store) ListAlarms(taskID int64, algoName, startDate, endDate string, st
 		       strftime('%Y-%m-%d %H:%M:%S', a.alarm_time) AS alarm_time,
 		       COALESCE(a.alarm_location,''), COALESCE(a.image_url,''),
 		       a.status, COALESCE(a.alarm_details,'{}'),
-		       t.task_name, c.name
+		       COALESCE(a.task_name,''), COALESCE(a.camera_name,'')
 		FROM alarms a
-		JOIN tasks t ON t.id = a.task_id
-		JOIN cameras c ON c.id = t.camera_id
 		`+where+`
 		ORDER BY a.alarm_time DESC
 		LIMIT ? OFFSET ?`, args...)
@@ -424,14 +434,16 @@ func (s *Store) ListAlarms(taskID int64, algoName, startDate, endDate string, st
 	var alarms []model.Alarm
 	for rows.Next() {
 		var a model.Alarm
+		var taskID sql.NullInt64
 		if err := rows.Scan(
-			&a.ID, &a.TaskID, &a.AlgoName, &a.AlarmTime,
+			&a.ID, &taskID, &a.AlgoName, &a.AlarmTime,
 			&a.AlarmLocation, &a.ImageURL,
 			&a.Status, &a.AlarmDetails,
 			&a.TaskName, &a.CameraName,
 		); err != nil {
 			return nil, 0, err
 		}
+		a.TaskID = taskID.Int64 // 0 when task has been deleted
 		alarms = append(alarms, a)
 	}
 	return alarms, total, nil
