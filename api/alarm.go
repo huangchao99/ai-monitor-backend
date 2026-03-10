@@ -80,6 +80,37 @@ func (h *AlarmHandler) UpdateStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "updated"})
 }
 
+func (h *AlarmHandler) BatchDelete(c *gin.Context) {
+	var req struct {
+		IDs []int64 `json:"ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "message": "ids 不能为空"})
+		return
+	}
+
+	imageURLs, err := h.store.BatchDeleteAlarms(req.IDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "message": err.Error()})
+		return
+	}
+
+	// Delete snapshot files
+	for _, url := range imageURLs {
+		var absPath string
+		if strings.HasPrefix(url, "/") {
+			absPath = url
+		} else {
+			absPath = filepath.Join("/home/hzhy/ai-monitor-service/snapshots", filepath.Base(url))
+		}
+		if removeErr := os.Remove(absPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("warn: failed to delete snapshot file %s: %v", absPath, removeErr)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "deleted", "data": gin.H{"count": len(req.IDs)}})
+}
+
 func (h *AlarmHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {

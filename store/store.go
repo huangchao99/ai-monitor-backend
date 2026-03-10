@@ -454,6 +454,38 @@ func (s *Store) UpdateAlarmStatus(id int64, status int) error {
 	return err
 }
 
+// BatchDeleteAlarms removes multiple alarm records in one transaction and returns
+// the image URLs (raw file paths) so the caller can clean up snapshot files.
+func (s *Store) BatchDeleteAlarms(ids []int64) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var imageURLs []string
+	for _, id := range ids {
+		var url string
+		row := tx.QueryRow("SELECT COALESCE(image_url,'') FROM alarms WHERE id=?", id)
+		if err := row.Scan(&url); err != nil {
+			if err == sql.ErrNoRows {
+				continue
+			}
+			return nil, err
+		}
+		if _, err := tx.Exec("DELETE FROM alarms WHERE id=?", id); err != nil {
+			return nil, err
+		}
+		if url != "" {
+			imageURLs = append(imageURLs, url)
+		}
+	}
+	return imageURLs, tx.Commit()
+}
+
 // DeleteAlarm removes an alarm record and returns its image_url (raw path) so the caller can delete the file.
 func (s *Store) DeleteAlarm(id int64) (imageURL string, err error) {
 	row := s.db.QueryRow("SELECT COALESCE(image_url,'') FROM alarms WHERE id=?", id)
