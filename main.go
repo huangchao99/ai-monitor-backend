@@ -27,6 +27,7 @@ func main() {
 	taskH := api.NewTaskHandler(s)
 	alarmH := api.NewAlarmHandler(s)
 	algoMgmtH := api.NewAlgoManageHandler(s)
+	voiceAlarmH := api.NewVoiceAlarmHandler(s)
 
 	// Gin router
 	r := gin.Default()
@@ -105,6 +106,19 @@ func main() {
 		alarms.PUT("/:id", alarmH.UpdateStatus)
 		alarms.DELETE("/:id", alarmH.Delete)
 		alarms.POST("/batch-delete", alarmH.BatchDelete)
+	}
+
+	// Voice alarm management
+	va := r.Group("/api/voice-alarm")
+	{
+		va.GET("/settings", voiceAlarmH.GetSettings)
+		va.PUT("/settings", voiceAlarmH.SaveSettings)
+		va.GET("/algo-map", voiceAlarmH.ListAlgoMap)
+		va.PUT("/algo-map/:algo_id", voiceAlarmH.SetAlgoMap)
+		va.DELETE("/algo-map/:algo_id", voiceAlarmH.DeleteAlgoMap)
+		va.GET("/audio-files", voiceAlarmH.ListAudioFiles)
+		va.POST("/audio-files", voiceAlarmH.UploadAudioFile)
+		va.DELETE("/audio-files/:name", voiceAlarmH.DeleteAudioFile)
 	}
 
 	// Serve snapshot images

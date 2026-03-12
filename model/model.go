@@ -142,6 +142,43 @@ type UpdateAlarmReq struct {
 	Status int `json:"status"`
 }
 
+// ---- System Settings ----
+
+// SystemSetting represents one row in the system_settings table.
+type SystemSetting struct {
+	Key   string `json:"key"   db:"key"`
+	Value string `json:"value" db:"value"`
+}
+
+// VoiceAlarmSettings is the aggregated view returned to the frontend.
+type VoiceAlarmSettings struct {
+	Enabled    bool   `json:"enabled"`
+	DeviceIP   string `json:"device_ip"`
+	DeviceUser string `json:"device_user"`
+	DevicePass string `json:"device_pass"`
+}
+
+// VoiceAlarmAlgoMap is one row in the voice_alarm_algo_map table.
+type VoiceAlarmAlgoMap struct {
+	AlgoID    int64  `json:"algo_id"    db:"algo_id"`
+	AlgoKey   string `json:"algo_key,omitempty"`
+	AlgoName  string `json:"algo_name,omitempty"`
+	AudioFile string `json:"audio_file" db:"audio_file"`
+}
+
+// ---- Request structs ----
+
+type UpdateVoiceAlarmSettingsReq struct {
+	Enabled    bool   `json:"enabled"`
+	DeviceIP   string `json:"device_ip"`
+	DeviceUser string `json:"device_user"`
+	DevicePass string `json:"device_pass"`
+}
+
+type SetVoiceAlarmAlgoMapReq struct {
+	AudioFile string `json:"audio_file" binding:"required"`
+}
+
 // ---- Model request structs ----
 
 type CreateModelReq struct {

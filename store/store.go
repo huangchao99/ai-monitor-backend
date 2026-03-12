@@ -62,6 +62,20 @@ func (s *Store) migrate() error {
 			FOREIGN KEY (algo_id)  REFERENCES algorithms(id) ON DELETE CASCADE,
 			FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS system_settings (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT ''
+		)`,
+		`INSERT OR IGNORE INTO system_settings (key, value) VALUES
+			('voice_alarm_enabled', '0'),
+			('voice_device_ip',     ''),
+			('voice_device_user',   ''),
+			('voice_device_pass',   '')`,
+		`CREATE TABLE IF NOT EXISTS voice_alarm_algo_map (
+			algo_id    INTEGER PRIMARY KEY,
+			audio_file TEXT NOT NULL,
+			FOREIGN KEY (algo_id) REFERENCES algorithms(id) ON DELETE CASCADE
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -716,6 +730,113 @@ func (s *Store) ListAlgoModels(algoID int64) ([]model.Model, error) {
 		models = append(models, m)
 	}
 	return models, nil
+}
+
+// ─── System Settings ──────────────────────────────────────────
+
+func (s *Store) GetSystemSetting(key string) (string, error) {
+	var value string
+	err := s.db.QueryRow("SELECT value FROM system_settings WHERE key=?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+func (s *Store) SetSystemSetting(key, value string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO system_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+		key, value,
+	)
+	return err
+}
+
+func (s *Store) GetVoiceAlarmSettings() (model.VoiceAlarmSettings, error) {
+	rows, err := s.db.Query(
+		"SELECT key, value FROM system_settings WHERE key IN ('voice_alarm_enabled','voice_device_ip','voice_device_user','voice_device_pass')",
+	)
+	if err != nil {
+		return model.VoiceAlarmSettings{}, err
+	}
+	defer rows.Close()
+	kv := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return model.VoiceAlarmSettings{}, err
+		}
+		kv[k] = v
+	}
+	return model.VoiceAlarmSettings{
+		Enabled:    kv["voice_alarm_enabled"] == "1",
+		DeviceIP:   kv["voice_device_ip"],
+		DeviceUser: kv["voice_device_user"],
+		DevicePass: kv["voice_device_pass"],
+	}, nil
+}
+
+func (s *Store) SaveVoiceAlarmSettings(req model.UpdateVoiceAlarmSettingsReq) error {
+	enabled := "0"
+	if req.Enabled {
+		enabled = "1"
+	}
+	pairs := [][2]string{
+		{"voice_alarm_enabled", enabled},
+		{"voice_device_ip", req.DeviceIP},
+		{"voice_device_user", req.DeviceUser},
+		{"voice_device_pass", req.DevicePass},
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, p := range pairs {
+		if _, err := tx.Exec(
+			"INSERT INTO system_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+			p[0], p[1],
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ─── Voice Alarm Algo Map ─────────────────────────────────────
+
+// ListVoiceAlarmAlgoMaps returns all algorithms joined with their voice mapping (if any).
+func (s *Store) ListVoiceAlarmAlgoMaps() ([]model.VoiceAlarmAlgoMap, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.algo_key, a.algo_name, COALESCE(v.audio_file, '') AS audio_file
+		FROM algorithms a
+		LEFT JOIN voice_alarm_algo_map v ON v.algo_id = a.id
+		ORDER BY a.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []model.VoiceAlarmAlgoMap
+	for rows.Next() {
+		var m model.VoiceAlarmAlgoMap
+		if err := rows.Scan(&m.AlgoID, &m.AlgoKey, &m.AlgoName, &m.AudioFile); err != nil {
+			return nil, err
+		}
+		result = append(result, m)
+	}
+	return result, nil
+}
+
+func (s *Store) SetVoiceAlarmAlgoMap(algoID int64, audioFile string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO voice_alarm_algo_map (algo_id, audio_file) VALUES (?,?) ON CONFLICT(algo_id) DO UPDATE SET audio_file=excluded.audio_file",
+		algoID, audioFile,
+	)
+	return err
+}
+
+func (s *Store) DeleteVoiceAlarmAlgoMap(algoID int64) error {
+	_, err := s.db.Exec("DELETE FROM voice_alarm_algo_map WHERE algo_id=?", algoID)
+	return err
 }
 
 func (s *Store) ListAlgorithmsWithModels() ([]model.Algorithm, error) {
