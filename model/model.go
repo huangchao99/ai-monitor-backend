@@ -220,3 +220,54 @@ type UpdateAlgorithmReq struct {
 	ParamDefinition string  `json:"param_definition"`
 	ModelIDs        []int64 `json:"model_ids"`
 }
+
+// ---- Alarm Upload ----
+
+// AlarmUploadSettings 报警上传全局配置
+type AlarmUploadSettings struct {
+	Enabled   bool   `json:"enabled"`
+	UploadURL string `json:"upload_url"`
+	DeviceID  string `json:"device_id"`
+}
+
+// UpdateAlarmUploadSettingsReq 保存报警上传配置请求体
+type UpdateAlarmUploadSettingsReq struct {
+	Enabled   bool   `json:"enabled"`
+	UploadURL string `json:"upload_url"`
+	DeviceID  string `json:"device_id"`
+}
+
+// AlarmUploadStats 上传统计
+type AlarmUploadStats struct {
+	Total   int `json:"total"`
+	Pending int `json:"pending"`
+	Success int `json:"success"`
+	Failed  int `json:"failed"`
+}
+
+// AlarmUploadQueueItem 队列条目（用于前端展示）
+type AlarmUploadQueueItem struct {
+	ID         int64  `json:"id"`
+	AlarmID    int64  `json:"alarm_id"`
+	Status     int    `json:"status"` // 0=待上传 1=成功 2=失败
+	RetryCount int    `json:"retry_count"`
+	LastError  string `json:"last_error"`
+	UpdatedAt  string `json:"updated_at"`
+	// 来自 alarms JOIN
+	AlgoName   string `json:"algo_name"`
+	AlarmTime  string `json:"alarm_time"`
+	TaskName   string `json:"task_name"`
+	CameraName string `json:"camera_name"`
+}
+
+// PendingUploadItem 供 uploader worker 内部使用
+type PendingUploadItem struct {
+	QueueID      int64
+	AlarmID      int64
+	AlgoName     string
+	AlarmTime    string
+	AlarmDetails string
+	ImageURL     string
+	TaskName     string
+	CameraName   string
+}

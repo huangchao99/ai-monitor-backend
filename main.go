@@ -11,6 +11,7 @@ import (
 	"ai-monitor-backend/config"
 	"ai-monitor-backend/pyservice"
 	"ai-monitor-backend/store"
+	"ai-monitor-backend/uploader"
 	"ai-monitor-backend/zlm"
 )
 
@@ -28,6 +29,9 @@ func main() {
 	alarmH := api.NewAlarmHandler(s)
 	algoMgmtH := api.NewAlgoManageHandler(s)
 	voiceAlarmH := api.NewVoiceAlarmHandler(s)
+	uploadWorker := uploader.New(s)
+	uploadWorker.Start()
+	alarmUploadH := api.NewAlarmUploadHandler(s, uploadWorker)
 
 	// Gin router
 	r := gin.Default()
@@ -119,6 +123,16 @@ func main() {
 		va.GET("/audio-files", voiceAlarmH.ListAudioFiles)
 		va.POST("/audio-files", voiceAlarmH.UploadAudioFile)
 		va.DELETE("/audio-files/:name", voiceAlarmH.DeleteAudioFile)
+	}
+
+	// Alarm Upload
+	au := r.Group("/api/alarm-upload")
+	{
+		au.GET("/settings", alarmUploadH.GetSettings)
+		au.PUT("/settings", alarmUploadH.SaveSettings)
+		au.GET("/stats", alarmUploadH.GetStats)
+		au.GET("/queue", alarmUploadH.ListQueue)
+		au.POST("/retry", alarmUploadH.RetryFailed)
 	}
 
 	// Serve snapshot images

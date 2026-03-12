@@ -76,6 +76,20 @@ func (s *Store) migrate() error {
 			audio_file TEXT NOT NULL,
 			FOREIGN KEY (algo_id) REFERENCES algorithms(id) ON DELETE CASCADE
 		)`,
+		`CREATE TABLE IF NOT EXISTS alarm_upload_queue (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			alarm_id    INTEGER NOT NULL UNIQUE,
+			status      INTEGER DEFAULT 0,
+			retry_count INTEGER DEFAULT 0,
+			last_error  TEXT    DEFAULT '',
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (alarm_id) REFERENCES alarms(id) ON DELETE CASCADE
+		)`,
+		`INSERT OR IGNORE INTO system_settings (key, value) VALUES
+			('alarm_upload_enabled',   '0'),
+			('alarm_upload_url',       ''),
+			('alarm_upload_device_id', '')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -855,4 +869,184 @@ func (s *Store) ListAlgorithmsWithModels() ([]model.Algorithm, error) {
 		algos[i].Models = models
 	}
 	return algos, nil
+}
+
+// ─── Alarm Upload Settings ────────────────────────────────────
+
+func (s *Store) GetAlarmUploadSettings() (model.AlarmUploadSettings, error) {
+	rows, err := s.db.Query(
+		"SELECT key, value FROM system_settings WHERE key IN ('alarm_upload_enabled','alarm_upload_url','alarm_upload_device_id')",
+	)
+	if err != nil {
+		return model.AlarmUploadSettings{}, err
+	}
+	defer rows.Close()
+	kv := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return model.AlarmUploadSettings{}, err
+		}
+		kv[k] = v
+	}
+	return model.AlarmUploadSettings{
+		Enabled:   kv["alarm_upload_enabled"] == "1",
+		UploadURL: kv["alarm_upload_url"],
+		DeviceID:  kv["alarm_upload_device_id"],
+	}, nil
+}
+
+func (s *Store) SaveAlarmUploadSettings(req model.UpdateAlarmUploadSettingsReq) error {
+	enabled := "0"
+	if req.Enabled {
+		enabled = "1"
+	}
+	pairs := [][2]string{
+		{"alarm_upload_enabled", enabled},
+		{"alarm_upload_url", req.UploadURL},
+		{"alarm_upload_device_id", req.DeviceID},
+	}
+	for _, p := range pairs {
+		if _, err := s.db.Exec(
+			"INSERT INTO system_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+			p[0], p[1],
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ─── Alarm Upload Queue ───────────────────────────────────────
+
+// EnqueueNewAlarms 将所有还未入队的 alarm 自动加入上传队列（status=0 待上传）
+func (s *Store) EnqueueNewAlarms() error {
+	_, err := s.db.Exec(`
+		INSERT OR IGNORE INTO alarm_upload_queue (alarm_id)
+		SELECT id FROM alarms
+		WHERE id NOT IN (SELECT alarm_id FROM alarm_upload_queue)
+	`)
+	return err
+}
+
+// GetPendingUploads 返回所有待上传（status=0）和失败（status=2）的条目，附带报警详情
+func (s *Store) GetPendingUploads() ([]model.PendingUploadItem, error) {
+	rows, err := s.db.Query(`
+		SELECT q.id, q.alarm_id,
+		       COALESCE(a.algo_name,''),
+		       strftime('%Y-%m-%d %H:%M:%S', a.alarm_time),
+		       COALESCE(a.alarm_details,''), COALESCE(a.image_url,''),
+		       COALESCE(a.task_name,''), COALESCE(a.camera_name,'')
+		FROM alarm_upload_queue q
+		JOIN alarms a ON a.id = q.alarm_id
+		WHERE q.status IN (0, 2)
+		ORDER BY q.id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []model.PendingUploadItem
+	for rows.Next() {
+		var it model.PendingUploadItem
+		if err := rows.Scan(
+			&it.QueueID, &it.AlarmID, &it.AlgoName, &it.AlarmTime,
+			&it.AlarmDetails, &it.ImageURL, &it.TaskName, &it.CameraName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, nil
+}
+
+func (s *Store) MarkUploadSuccess(queueID int64) error {
+	_, err := s.db.Exec(
+		"UPDATE alarm_upload_queue SET status=1, last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+		queueID,
+	)
+	return err
+}
+
+func (s *Store) MarkUploadFailed(queueID int64, errMsg string) error {
+	_, err := s.db.Exec(
+		"UPDATE alarm_upload_queue SET status=2, retry_count=retry_count+1, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+		errMsg, queueID,
+	)
+	return err
+}
+
+func (s *Store) GetAlarmUploadStats() (model.AlarmUploadStats, error) {
+	var stats model.AlarmUploadStats
+	err := s.db.QueryRow(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0)
+		FROM alarm_upload_queue
+	`).Scan(&stats.Total, &stats.Pending, &stats.Success, &stats.Failed)
+	return stats, err
+}
+
+func (s *Store) ListAlarmUploadQueue(statusFilter, page, size int) ([]model.AlarmUploadQueueItem, int, error) {
+	if size <= 0 {
+		size = 20
+	}
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * size
+
+	where := "WHERE 1=1"
+	args := []any{}
+	if statusFilter >= 0 {
+		where += " AND q.status=?"
+		args = append(args, statusFilter)
+	}
+
+	var total int
+	countArgs := make([]any, len(args))
+	copy(countArgs, args)
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM alarm_upload_queue q JOIN alarms a ON a.id=q.alarm_id "+where,
+		countArgs...,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, size, offset)
+	rows, err := s.db.Query(`
+		SELECT q.id, q.alarm_id, q.status, q.retry_count, COALESCE(q.last_error,''),
+		       strftime('%Y-%m-%d %H:%M:%S', q.updated_at),
+		       COALESCE(a.algo_name,''),
+		       strftime('%Y-%m-%d %H:%M:%S', a.alarm_time),
+		       COALESCE(a.task_name,''), COALESCE(a.camera_name,'')
+		FROM alarm_upload_queue q
+		JOIN alarms a ON a.id = q.alarm_id
+		`+where+`
+		ORDER BY q.updated_at DESC
+		LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var items []model.AlarmUploadQueueItem
+	for rows.Next() {
+		var it model.AlarmUploadQueueItem
+		if err := rows.Scan(
+			&it.ID, &it.AlarmID, &it.Status, &it.RetryCount, &it.LastError,
+			&it.UpdatedAt, &it.AlgoName, &it.AlarmTime, &it.TaskName, &it.CameraName,
+		); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, it)
+	}
+	return items, total, nil
+}
+
+func (s *Store) ResetFailedUploads() error {
+	_, err := s.db.Exec(
+		"UPDATE alarm_upload_queue SET status=0, updated_at=CURRENT_TIMESTAMP WHERE status=2",
+	)
+	return err
 }
