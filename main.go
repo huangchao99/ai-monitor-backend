@@ -9,6 +9,7 @@ import (
 
 	"ai-monitor-backend/api"
 	"ai-monitor-backend/config"
+	"ai-monitor-backend/device"
 	"ai-monitor-backend/pyservice"
 	"ai-monitor-backend/store"
 	"ai-monitor-backend/uploader"
@@ -16,6 +17,9 @@ import (
 )
 
 func main() {
+	// 启动时生成/加载设备唯一 ID（eMMC CID SHA256），写入 /opt/device_id
+	device.Init()
+
 	// Open DB
 	s, err := store.New(config.DBPath)
 	if err != nil {

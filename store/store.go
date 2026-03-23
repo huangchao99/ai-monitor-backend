@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"ai-monitor-backend/device"
 	"ai-monitor-backend/model"
 
 	_ "modernc.org/sqlite"
@@ -875,7 +876,7 @@ func (s *Store) ListAlgorithmsWithModels() ([]model.Algorithm, error) {
 
 func (s *Store) GetAlarmUploadSettings() (model.AlarmUploadSettings, error) {
 	rows, err := s.db.Query(
-		"SELECT key, value FROM system_settings WHERE key IN ('alarm_upload_enabled','alarm_upload_url','alarm_upload_device_id')",
+		"SELECT key, value FROM system_settings WHERE key IN ('alarm_upload_enabled','alarm_upload_url')",
 	)
 	if err != nil {
 		return model.AlarmUploadSettings{}, err
@@ -892,7 +893,7 @@ func (s *Store) GetAlarmUploadSettings() (model.AlarmUploadSettings, error) {
 	return model.AlarmUploadSettings{
 		Enabled:   kv["alarm_upload_enabled"] == "1",
 		UploadURL: kv["alarm_upload_url"],
-		DeviceID:  kv["alarm_upload_device_id"],
+		DeviceID:  device.Get(), // 从硬件自动读取，不存 DB
 	}, nil
 }
 
@@ -904,7 +905,6 @@ func (s *Store) SaveAlarmUploadSettings(req model.UpdateAlarmUploadSettingsReq) 
 	pairs := [][2]string{
 		{"alarm_upload_enabled", enabled},
 		{"alarm_upload_url", req.UploadURL},
-		{"alarm_upload_device_id", req.DeviceID},
 	}
 	for _, p := range pairs {
 		if _, err := s.db.Exec(

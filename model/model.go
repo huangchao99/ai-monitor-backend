@@ -230,11 +230,10 @@ type AlarmUploadSettings struct {
 	DeviceID  string `json:"device_id"`
 }
 
-// UpdateAlarmUploadSettingsReq 保存报警上传配置请求体
+// UpdateAlarmUploadSettingsReq 保存报警上传配置请求体（DeviceID 由硬件自动生成，不接受外部传入）
 type UpdateAlarmUploadSettingsReq struct {
 	Enabled   bool   `json:"enabled"`
 	UploadURL string `json:"upload_url"`
-	DeviceID  string `json:"device_id"`
 }
 
 // AlarmUploadStats 上传统计
