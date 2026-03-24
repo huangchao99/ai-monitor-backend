@@ -11,9 +11,8 @@ export PORT=:8090
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [ ! -f ./ai-monitor-backend ]; then
-  echo "Binary not found, building..."
-  GOPATH=/home/hzhy/gopath GOPROXY=https://goproxy.cn,direct go build -o ai-monitor-backend .
-fi
+# 每次启动前编译，避免改了代码却只重启旧进程（表现为新接口一直 404）
+echo "Building ai-monitor-backend..."
+GOPATH=/home/hzhy/gopath GOPROXY=https://goproxy.cn,direct go build -o ai-monitor-backend . || exit 1
 
 exec ./ai-monitor-backend

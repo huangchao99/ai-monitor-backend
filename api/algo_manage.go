@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -175,7 +176,13 @@ func proxyToPython(c *gin.Context, method, path string, body io.Reader, contentT
 		fail(c, http.StatusInternalServerError, "read python response failed")
 		return
 	}
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+	for key, values := range resp.Header {
+		for _, value := range values {
+			c.Writer.Header().Add(key, value)
+		}
+	}
+	c.Status(resp.StatusCode)
+	_, _ = c.Writer.Write(respBody)
 }
 
 func (h *AlgoManageHandler) ListPlugins(c *gin.Context) {
@@ -195,7 +202,12 @@ func (h *AlgoManageHandler) UploadPlugin(c *gin.Context) {
 
 func (h *AlgoManageHandler) DeletePlugin(c *gin.Context) {
 	filename := c.Param("filename")
-	proxyToPython(c, http.MethodDelete, "/api/plugins/"+filename, nil, "")
+	proxyToPython(c, http.MethodDelete, "/api/plugins/"+url.PathEscape(filename), nil, "")
+}
+
+func (h *AlgoManageHandler) DownloadPlugin(c *gin.Context) {
+	filename := c.Param("filename")
+	proxyToPython(c, http.MethodGet, "/api/plugins/"+url.PathEscape(filename)+"/download", nil, "")
 }
 
 // ─── Model File Upload ────────────────────────────────────────

@@ -91,6 +91,7 @@ func main() {
 
 		algoMgmt.GET("/plugins", algoMgmtH.ListPlugins)
 		algoMgmt.POST("/plugins", algoMgmtH.UploadPlugin)
+		algoMgmt.GET("/plugins/:filename/download", algoMgmtH.DownloadPlugin)
 		algoMgmt.DELETE("/plugins/:filename", algoMgmtH.DeletePlugin)
 
 		algoMgmt.POST("/upload-file", algoMgmtH.UploadModelFile)
