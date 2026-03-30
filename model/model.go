@@ -33,6 +33,7 @@ type Algorithm struct {
 	AlgoKey         string `json:"algo_key" db:"algo_key"`
 	AlgoName        string `json:"algo_name" db:"algo_name"`
 	Category        string `json:"category" db:"category"`
+	UploadRecogType string `json:"upload_recog_type" db:"upload_recog_type"`
 	ParamDefinition string `json:"param_definition" db:"param_definition"`
 	// Joined
 	Models []Model `json:"models,omitempty"`
@@ -209,6 +210,7 @@ type CreateAlgorithmReq struct {
 	AlgoKey         string  `json:"algo_key" binding:"required"`
 	AlgoName        string  `json:"algo_name" binding:"required"`
 	Category        string  `json:"category"`
+	UploadRecogType string  `json:"upload_recog_type"`
 	ParamDefinition string  `json:"param_definition"`
 	ModelIDs        []int64 `json:"model_ids"`
 }
@@ -217,6 +219,7 @@ type UpdateAlgorithmReq struct {
 	AlgoKey         string  `json:"algo_key"`
 	AlgoName        string  `json:"algo_name"`
 	Category        string  `json:"category"`
+	UploadRecogType string  `json:"upload_recog_type"`
 	ParamDefinition string  `json:"param_definition"`
 	ModelIDs        []int64 `json:"model_ids"`
 }
@@ -264,6 +267,7 @@ type PendingUploadItem struct {
 	QueueID      int64
 	AlarmID      int64
 	AlgoName     string
+	RecogType    string
 	AlarmTime    string
 	AlarmDetails string
 	ImageURL     string

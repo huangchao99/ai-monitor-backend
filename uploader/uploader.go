@@ -91,7 +91,7 @@ func (u *Uploader) uploadOne(s model.AlarmUploadSettings, item model.PendingUplo
 		"TaskCode":        item.TaskName,
 		"CameraNo":        item.CameraName,
 		"ResultID":        fmt.Sprintf("%d", item.AlarmID),
-		"RecogType":       item.AlgoName,
+		"RecogType":       item.RecogType,
 		"ResultTime":      item.AlarmTime,
 		"ResultContent":   extractContent(item.AlarmDetails),
 		"ResultImageData": imageBase64,

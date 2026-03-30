@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"ai-monitor-backend/device"
@@ -97,6 +98,12 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migrate: %w (stmt: %s)", err, stmt[:min(40, len(stmt))])
 		}
 	}
+	if err := s.ensureAlgorithmUploadRecogTypeColumn(); err != nil {
+		return err
+	}
+	if err := s.seedAlgorithmUploadRecogType(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -105,6 +112,44 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (s *Store) ensureAlgorithmUploadRecogTypeColumn() error {
+	_, err := s.db.Exec("ALTER TABLE algorithms ADD COLUMN upload_recog_type TEXT DEFAULT ''")
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("ensure algorithms.upload_recog_type: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) seedAlgorithmUploadRecogType() error {
+	type mapping struct {
+		Alias      string
+		LegacyCode string
+	}
+	mappings := map[string]mapping{
+		"no_person":      {Alias: "rylg", LegacyCode: "000202"},
+		"eye_close":      {Alias: "by", LegacyCode: "000101"},
+		"yawning":        {Alias: "dhq", LegacyCode: "000102"},
+		"no_hardhat":     {Alias: "wcaqm", LegacyCode: "200302"},
+		"no_mask":        {Alias: "Driver-NoMask", LegacyCode: "200304"},
+		"no_safety_vest": {Alias: "unwear_lifejacket", LegacyCode: "200301"},
+		"call":           {Alias: "call_phone", LegacyCode: "000701"},
+		"phone":          {Alias: "play_phone", LegacyCode: "000703"},
+		"smoke":          {Alias: "xy", LegacyCode: "100704"},
+	}
+	for algoKey, item := range mappings {
+		if _, err := s.db.Exec(
+			`UPDATE algorithms
+			 SET upload_recog_type=?
+			 WHERE algo_key=?
+			   AND (COALESCE(upload_recog_type,'')='' OR upload_recog_type=?)`,
+			item.Alias, algoKey, item.LegacyCode,
+		); err != nil {
+			return fmt.Errorf("seed upload_recog_type for %s: %w", algoKey, err)
+		}
+	}
+	return nil
 }
 
 // ─── Cameras ──────────────────────────────────────────────────
@@ -238,7 +283,7 @@ func (s *Store) DeleteZlmStream(cameraID int64) error {
 // ─── Algorithms ───────────────────────────────────────────────
 
 func (s *Store) ListAlgorithms() ([]model.Algorithm, error) {
-	rows, err := s.db.Query("SELECT id, algo_key, algo_name, COALESCE(category,''), COALESCE(param_definition,'') FROM algorithms ORDER BY id")
+	rows, err := s.db.Query("SELECT id, algo_key, algo_name, COALESCE(category,''), COALESCE(upload_recog_type,''), COALESCE(param_definition,'') FROM algorithms ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +291,7 @@ func (s *Store) ListAlgorithms() ([]model.Algorithm, error) {
 	var algos []model.Algorithm
 	for rows.Next() {
 		var a model.Algorithm
-		if err := rows.Scan(&a.ID, &a.AlgoKey, &a.AlgoName, &a.Category, &a.ParamDefinition); err != nil {
+		if err := rows.Scan(&a.ID, &a.AlgoKey, &a.AlgoName, &a.Category, &a.UploadRecogType, &a.ParamDefinition); err != nil {
 			return nil, err
 		}
 		algos = append(algos, a)
@@ -662,8 +707,8 @@ func (s *Store) CreateAlgorithm(req model.CreateAlgorithmReq) (int64, error) {
 	defer tx.Rollback()
 
 	res, err := tx.Exec(
-		"INSERT INTO algorithms (algo_key, algo_name, category, param_definition) VALUES (?,?,?,?)",
-		req.AlgoKey, req.AlgoName, req.Category, req.ParamDefinition,
+		"INSERT INTO algorithms (algo_key, algo_name, category, upload_recog_type, param_definition) VALUES (?,?,?,?,?)",
+		req.AlgoKey, req.AlgoName, req.Category, req.UploadRecogType, req.ParamDefinition,
 	)
 	if err != nil {
 		return 0, err
@@ -688,8 +733,8 @@ func (s *Store) UpdateAlgorithm(id int64, req model.UpdateAlgorithmReq) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		"UPDATE algorithms SET algo_key=?, algo_name=?, category=?, param_definition=? WHERE id=?",
-		req.AlgoKey, req.AlgoName, req.Category, req.ParamDefinition, id,
+		"UPDATE algorithms SET algo_key=?, algo_name=?, category=?, upload_recog_type=?, param_definition=? WHERE id=?",
+		req.AlgoKey, req.AlgoName, req.Category, req.UploadRecogType, req.ParamDefinition, id,
 	); err != nil {
 		return err
 	}
@@ -934,6 +979,15 @@ func (s *Store) GetPendingUploads() ([]model.PendingUploadItem, error) {
 	rows, err := s.db.Query(`
 		SELECT q.id, q.alarm_id,
 		       COALESCE(a.algo_name,''),
+		       COALESCE(
+		           (SELECT COALESCE(alg.upload_recog_type, '')
+		            FROM algorithms alg
+		            WHERE alg.algo_name = a.algo_name
+		              AND COALESCE(alg.upload_recog_type, '') != ''
+		            ORDER BY alg.id
+		            LIMIT 1),
+		           COALESCE(a.algo_name, '')
+		       ),
 		       strftime('%Y-%m-%d %H:%M:%S', a.alarm_time),
 		       COALESCE(a.alarm_details,''), COALESCE(a.image_url,''),
 		       COALESCE(a.task_name,''), COALESCE(a.camera_name,'')
@@ -950,7 +1004,7 @@ func (s *Store) GetPendingUploads() ([]model.PendingUploadItem, error) {
 	for rows.Next() {
 		var it model.PendingUploadItem
 		if err := rows.Scan(
-			&it.QueueID, &it.AlarmID, &it.AlgoName, &it.AlarmTime,
+			&it.QueueID, &it.AlarmID, &it.AlgoName, &it.RecogType, &it.AlarmTime,
 			&it.AlarmDetails, &it.ImageURL, &it.TaskName, &it.CameraName,
 		); err != nil {
 			return nil, err
