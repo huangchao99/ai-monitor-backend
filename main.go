@@ -33,6 +33,7 @@ func main() {
 	alarmH := api.NewAlarmHandler(s)
 	algoMgmtH := api.NewAlgoManageHandler(s)
 	voiceAlarmH := api.NewVoiceAlarmHandler(s)
+	positionH := api.NewPositionHandler(s)
 	uploadWorker := uploader.New(s)
 	uploadWorker.Start()
 	alarmUploadH := api.NewAlarmUploadHandler(s, uploadWorker)
@@ -138,6 +139,14 @@ func main() {
 		au.GET("/stats", alarmUploadH.GetStats)
 		au.GET("/queue", alarmUploadH.ListQueue)
 		au.POST("/retry", alarmUploadH.RetryFailed)
+	}
+
+	// Position / navigation management
+	pos := r.Group("/api/position")
+	{
+		pos.GET("/settings", positionH.GetSettings)
+		pos.PUT("/settings", positionH.SaveSettings)
+		pos.GET("/status", positionH.GetStatus)
 	}
 
 	// Serve snapshot images

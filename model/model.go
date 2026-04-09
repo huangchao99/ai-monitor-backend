@@ -274,3 +274,37 @@ type PendingUploadItem struct {
 	TaskName     string
 	CameraName   string
 }
+
+// ---- Position / Navigation ----
+
+// PositionSettings 定位与航行判定配置
+type PositionSettings struct {
+	SpeedThresholdKnots float64 `json:"speed_threshold_knots"`
+	CheckIntervalSec    int     `json:"check_interval_sec"`
+}
+
+// UpdatePositionSettingsReq 保存定位配置请求体
+type UpdatePositionSettingsReq struct {
+	SpeedThresholdKnots float64 `json:"speed_threshold_knots"`
+	CheckIntervalSec    int     `json:"check_interval_sec"`
+}
+
+// PositionStatus 当前定位与航行状态
+type PositionStatus struct {
+	ProviderType    string  `json:"provider_type"`
+	Source          string  `json:"source"`
+	LocationValid   bool    `json:"location_valid"`
+	PositionStatus  string  `json:"position_status"`
+	NavigationState string  `json:"navigation_state"`
+	Latitude        float64 `json:"latitude"`
+	LatitudeDir     string  `json:"latitude_dir"`
+	Longitude       float64 `json:"longitude"`
+	LongitudeDir    string  `json:"longitude_dir"`
+	SpeedKnots      float64 `json:"speed_knots"`
+	SpeedKmh        float64 `json:"speed_kmh"`
+	Course          float64 `json:"course"`
+	UTCTime         string  `json:"utc_time"`
+	BeijingTime     string  `json:"beijing_time"`
+	UpdatedAt       string  `json:"updated_at"`
+	ErrorMessage    string  `json:"error_message"`
+}

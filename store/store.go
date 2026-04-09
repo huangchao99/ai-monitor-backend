@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +93,38 @@ func (s *Store) migrate() error {
 			('alarm_upload_enabled',   '0'),
 			('alarm_upload_url',       ''),
 			('alarm_upload_device_id', '')`,
+		`INSERT OR IGNORE INTO system_settings (key, value) VALUES
+			('navigation_speed_threshold_knots', '0.5'),
+			('navigation_check_interval_sec',    '30'),
+			('position_provider_type',           'serial_modbus')`,
+		`CREATE TABLE IF NOT EXISTS position_runtime_status (
+			id                INTEGER PRIMARY KEY CHECK (id = 1),
+			provider_type     TEXT    NOT NULL DEFAULT '',
+			source            TEXT    NOT NULL DEFAULT '',
+			location_valid    INTEGER NOT NULL DEFAULT 0,
+			position_status   TEXT    NOT NULL DEFAULT '',
+			navigation_state  TEXT    NOT NULL DEFAULT 'unknown',
+			latitude          REAL    NOT NULL DEFAULT 0,
+			latitude_dir      TEXT    NOT NULL DEFAULT '',
+			longitude         REAL    NOT NULL DEFAULT 0,
+			longitude_dir     TEXT    NOT NULL DEFAULT '',
+			speed_knots       REAL    NOT NULL DEFAULT 0,
+			speed_kmh         REAL    NOT NULL DEFAULT 0,
+			course            REAL    NOT NULL DEFAULT 0,
+			utc_time          TEXT    NOT NULL DEFAULT '',
+			beijing_time      TEXT    NOT NULL DEFAULT '',
+			error_message     TEXT    NOT NULL DEFAULT '',
+			updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT OR IGNORE INTO position_runtime_status (
+			id, provider_type, source, location_valid, position_status, navigation_state,
+			latitude, latitude_dir, longitude, longitude_dir,
+			speed_knots, speed_kmh, course, utc_time, beijing_time, error_message
+		) VALUES (
+			1, '', '', 0, '', 'unknown',
+			0, '', 0, '',
+			0, 0, 0, '', '', ''
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -960,6 +993,105 @@ func (s *Store) SaveAlarmUploadSettings(req model.UpdateAlarmUploadSettingsReq) 
 		}
 	}
 	return nil
+}
+
+// ─── Position Settings / Status ───────────────────────────────
+
+func (s *Store) GetPositionSettings() (model.PositionSettings, error) {
+	rows, err := s.db.Query(
+		"SELECT key, value FROM system_settings WHERE key IN ('navigation_speed_threshold_knots','navigation_check_interval_sec')",
+	)
+	if err != nil {
+		return model.PositionSettings{}, err
+	}
+	defer rows.Close()
+
+	settings := model.PositionSettings{
+		SpeedThresholdKnots: 0.5,
+		CheckIntervalSec:    30,
+	}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return model.PositionSettings{}, err
+		}
+		switch key {
+		case "navigation_speed_threshold_knots":
+			if v, err := strconv.ParseFloat(value, 64); err == nil && v >= 0 {
+				settings.SpeedThresholdKnots = v
+			}
+		case "navigation_check_interval_sec":
+			if v, err := strconv.Atoi(value); err == nil && v > 0 {
+				settings.CheckIntervalSec = v
+			}
+		}
+	}
+	return settings, nil
+}
+
+func (s *Store) SavePositionSettings(req model.UpdatePositionSettingsReq) error {
+	if req.SpeedThresholdKnots < 0 {
+		return fmt.Errorf("航行速度阈值不能小于 0")
+	}
+	if req.CheckIntervalSec <= 0 {
+		return fmt.Errorf("检测间隔必须大于 0")
+	}
+
+	pairs := [][2]string{
+		{"navigation_speed_threshold_knots", strconv.FormatFloat(req.SpeedThresholdKnots, 'f', -1, 64)},
+		{"navigation_check_interval_sec", strconv.Itoa(req.CheckIntervalSec)},
+	}
+	for _, p := range pairs {
+		if _, err := s.db.Exec(
+			"INSERT INTO system_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+			p[0], p[1],
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) GetPositionStatus() (model.PositionStatus, error) {
+	row := s.db.QueryRow(`
+		SELECT COALESCE(provider_type,''), COALESCE(source,''), COALESCE(location_valid,0),
+		       COALESCE(position_status,''), COALESCE(navigation_state,'unknown'),
+		       COALESCE(latitude,0), COALESCE(latitude_dir,''),
+		       COALESCE(longitude,0), COALESCE(longitude_dir,''),
+		       COALESCE(speed_knots,0), COALESCE(speed_kmh,0), COALESCE(course,0),
+		       COALESCE(utc_time,''), COALESCE(beijing_time,''), COALESCE(error_message,''),
+		       COALESCE(strftime('%Y-%m-%d %H:%M:%S', updated_at), '')
+		FROM position_runtime_status
+		WHERE id=1
+	`)
+
+	var status model.PositionStatus
+	var locationValid int
+	if err := row.Scan(
+		&status.ProviderType,
+		&status.Source,
+		&locationValid,
+		&status.PositionStatus,
+		&status.NavigationState,
+		&status.Latitude,
+		&status.LatitudeDir,
+		&status.Longitude,
+		&status.LongitudeDir,
+		&status.SpeedKnots,
+		&status.SpeedKmh,
+		&status.Course,
+		&status.UTCTime,
+		&status.BeijingTime,
+		&status.ErrorMessage,
+		&status.UpdatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return model.PositionStatus{NavigationState: "unknown"}, nil
+		}
+		return model.PositionStatus{}, err
+	}
+	status.LocationValid = locationValid == 1
+	return status, nil
 }
 
 // ─── Alarm Upload Queue ───────────────────────────────────────
