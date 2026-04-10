@@ -149,8 +149,8 @@ func main() {
 		pos.GET("/status", positionH.GetStatus)
 	}
 
-	// Serve snapshot images
-	r.Static("/snapshots", "/home/hzhy/ai-monitor-service/snapshots")
+	// Serve snapshot images from the shared runtime data directory.
+	r.Static("/snapshots", config.SnapshotDir)
 
 	log.Printf("AI Monitor Backend listening on %s", config.Port)
 	if err := r.Run(config.Port); err != nil {

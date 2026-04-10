@@ -11,11 +11,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"ai-monitor-backend/config"
 	"ai-monitor-backend/model"
 	"ai-monitor-backend/store"
 )
-
-const snapshotDir = "/home/hzhy/ai-monitor-service/snapshots"
 
 // Uploader 后台报警上传 Worker
 type Uploader struct {
@@ -78,8 +77,8 @@ func (u *Uploader) runOnce() {
 func (u *Uploader) uploadOne(s model.AlarmUploadSettings, item model.PendingUploadItem) error {
 	imageBase64 := ""
 	if item.ImageURL != "" {
-		// image_url 格式为 "/snapshots/xxx.jpg"，实际文件在 snapshotDir 下
-		imgPath := filepath.Join(snapshotDir, filepath.Base(item.ImageURL))
+		// image_url 格式为 "/snapshots/xxx.jpg"，实际文件在共享 snapshot 目录下
+		imgPath := filepath.Join(config.SnapshotDir, filepath.Base(item.ImageURL))
 		if data, err := os.ReadFile(imgPath); err == nil {
 			imageBase64 = base64.StdEncoding.EncodeToString(data)
 		}

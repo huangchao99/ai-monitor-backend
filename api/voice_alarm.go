@@ -11,13 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ai-monitor-backend/config"
 	"ai-monitor-backend/model"
 	"ai-monitor-backend/store"
-)
-
-const (
-	audioDir        = "/home/hzhy/Audio/AudioFile"
-	configPropsPath = "/home/hzhy/Audio/config.properties"
 )
 
 // VoiceAlarmHandler handles all voice-alarm management endpoints.
@@ -60,10 +56,13 @@ func (h *VoiceAlarmHandler) SaveSettings(c *gin.Context) {
 	ok(c, nil)
 }
 
-// writeConfigProperties overwrites /home/hzhy/Audio/config.properties.
+// writeConfigProperties overwrites the runtime audio config file.
 func writeConfigProperties(ip, user, pass string) error {
 	content := fmt.Sprintf("ip=%s\nname=%s\npass=%s\n", ip, user, pass)
-	return os.WriteFile(configPropsPath, []byte(content), 0644)
+	if err := os.MkdirAll(filepath.Dir(config.AudioConfigPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(config.AudioConfigPath, []byte(content), 0644)
 }
 
 // ─── Algo Map ──────────────────────────────────────────────────
@@ -118,7 +117,7 @@ func (h *VoiceAlarmHandler) DeleteAlgoMap(c *gin.Context) {
 
 // ListAudioFiles lists all .pcm files in the AudioFile directory.
 func (h *VoiceAlarmHandler) ListAudioFiles(c *gin.Context) {
-	entries, err := os.ReadDir(audioDir)
+	entries, err := os.ReadDir(config.AudioFilesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			ok(c, []string{})
@@ -138,9 +137,9 @@ func (h *VoiceAlarmHandler) ListAudioFiles(c *gin.Context) {
 			size = info.Size()
 		}
 		files = append(files, gin.H{
-			"name": strings.TrimSuffix(e.Name(), ".pcm"),
+			"name":     strings.TrimSuffix(e.Name(), ".pcm"),
 			"filename": e.Name(),
-			"size": size,
+			"size":     size,
 		})
 	}
 	if files == nil {
@@ -162,7 +161,7 @@ func (h *VoiceAlarmHandler) UploadAudioFile(c *gin.Context) {
 	}
 	// Sanitise filename: no path traversal
 	filename := filepath.Base(file.Filename)
-	dest := filepath.Join(audioDir, filename)
+	dest := filepath.Join(config.AudioFilesDir, filename)
 
 	src, err := file.Open()
 	if err != nil {
@@ -171,7 +170,7 @@ func (h *VoiceAlarmHandler) UploadAudioFile(c *gin.Context) {
 	}
 	defer src.Close()
 
-	if err := os.MkdirAll(audioDir, 0755); err != nil {
+	if err := os.MkdirAll(config.AudioFilesDir, 0755); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -206,7 +205,7 @@ func (h *VoiceAlarmHandler) DeleteAudioFile(c *gin.Context) {
 	if !strings.HasSuffix(filename, ".pcm") {
 		filename += ".pcm"
 	}
-	dest := filepath.Join(audioDir, filename)
+	dest := filepath.Join(config.AudioFilesDir, filename)
 	if err := os.Remove(dest); err != nil {
 		if os.IsNotExist(err) {
 			fail(c, http.StatusNotFound, "文件不存在")

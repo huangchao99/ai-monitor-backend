@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ai-monitor-backend/config"
 	"ai-monitor-backend/model"
 	"ai-monitor-backend/store"
 )
@@ -101,7 +102,7 @@ func (h *AlarmHandler) BatchDelete(c *gin.Context) {
 		if strings.HasPrefix(url, "/") {
 			absPath = url
 		} else {
-			absPath = filepath.Join("/home/hzhy/ai-monitor-service/snapshots", filepath.Base(url))
+			absPath = filepath.Join(config.SnapshotDir, filepath.Base(url))
 		}
 		if removeErr := os.Remove(absPath); removeErr != nil && !os.IsNotExist(removeErr) {
 			log.Printf("warn: failed to delete snapshot file %s: %v", absPath, removeErr)
@@ -129,7 +130,7 @@ func (h *AlarmHandler) Delete(c *gin.Context) {
 		}
 	} else if imageURL != "" {
 		// Relative path fallback
-		absPath := filepath.Join("/home/hzhy/ai-monitor-service/snapshots", filepath.Base(imageURL))
+		absPath := filepath.Join(config.SnapshotDir, filepath.Base(imageURL))
 		if removeErr := os.Remove(absPath); removeErr != nil && !os.IsNotExist(removeErr) {
 			log.Printf("warn: failed to delete snapshot file %s: %v", absPath, removeErr)
 		}
